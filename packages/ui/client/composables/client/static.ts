@@ -1,5 +1,8 @@
 import type { RunnerTestFile, SerializedRootConfig } from 'vitest'
-import type { SharedModuleGraphByProject } from '../../../../vitest/src/types/general'
+import type {
+  SharedModuleGraphByProject,
+  TestFailureReport,
+} from '../../../../vitest/src/types/general'
 import type { VitestClient, VitestClientRpc } from './ws'
 import { decompressSync, strFromU8 } from 'fflate'
 import { parse } from 'flatted'
@@ -20,6 +23,8 @@ export interface HTMLReportMetadata {
     codeTable: string[]
     testModules: { [projectName: string]: { [relativeModuleId: string]: number } }
   }
+  // the reports of tests with failed attempts
+  failureReports: Record<string, TestFailureReport>
 }
 
 function deserializeReportMetadata(metadata: HTMLReportMetadata) {
@@ -49,6 +54,14 @@ function deserializeReportMetadata(metadata: HTMLReportMetadata) {
     },
     getUnhandledErrors: async () => {
       return metadata.unhandledErrors
+    },
+    getFailureReports: async (testIds) => {
+      return Object.fromEntries(
+        testIds.flatMap((id) => {
+          const report = metadata.failureReports?.[id]
+          return report ? [[id, report]] : []
+        }),
+      )
     },
     readTestFile: async (id) => {
       return sourceCodes[id]

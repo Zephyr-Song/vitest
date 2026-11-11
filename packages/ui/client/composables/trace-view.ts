@@ -8,6 +8,7 @@ import { groupTraceAttempts } from '@vitest/utils/trace'
 import { useLocalStorage } from '@vueuse/core'
 import { computed, ref, shallowRef, watch, watchEffect } from 'vue'
 import { getProjectConfigByName } from '~/utils/task'
+import { getRepeatSeed } from '../../../vitest/src/utils/random.ts'
 import { isRepeatReplay } from '../../../vitest/src/utils/tasks.ts'
 import { browserState, client, config } from './client'
 import { detailsPosition } from './navigation'
@@ -202,6 +203,25 @@ function hasTraceView(test: RunnerTestCase): boolean {
     project?.browser.traceView ??
     config.value.browser?.traceView
   return traceView?.mode === 'on'
+}
+
+// the seed of `context.random` and `vi.useFakeRandom()` in the attempt of the trace
+export function getTraceAttemptSeed(
+  test: RunnerTestCase,
+  trace: BrowserTraceData,
+): string | undefined {
+  const attempt = test.result?.attempts?.find(
+    ({ retryIndex, repeatIndex }) => retryIndex === trace.retry && repeatIndex === trace.repeats,
+  )
+  if (attempt) {
+    return attempt.seed
+  }
+  // a repeat that passed on its first run has no attempt in the result
+  const repeats = test.result?.repeats
+  if (repeats && !trace.retry && repeats.seeded[trace.repeats]) {
+    return getRepeatSeed(repeats, trace.repeats)
+  }
+  return undefined
 }
 
 export function getTraceAttemptLabel(test: RunnerTestCase, trace: BrowserTraceData) {

@@ -66,6 +66,8 @@ $ vitest run --merge-reports
    Per blob  4.20s 3.92s
 ```
 
+The [replay command](/guide/seeded-tests#replay-a-seed) of a failed test has the seed and the flags of the blob that tested its file.
+
 To use one seed in all shards, give each shard the same seed, for example the ID of the CI run. Then you know the seed before the tests start, also if a shard does not finish. A test gets the same values in each shard and in a run without `--shard`:
 
 ```yaml

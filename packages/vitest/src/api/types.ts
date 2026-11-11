@@ -9,7 +9,12 @@ import type {
   TestArtifact,
 } from '../runtime/runner/types'
 import type { SerializedTestSpecification } from '../runtime/types/utils'
-import type { LabelColor, ModuleGraphData, UserConsoleLog } from '../types/general'
+import type {
+  LabelColor,
+  ModuleGraphData,
+  TestFailureReport,
+  UserConsoleLog,
+} from '../types/general'
 import type {
   ModuleDefinitionDurationsDiagnostic,
   UntrackedModuleDefinitionDiagnostic,
@@ -73,6 +78,7 @@ export interface WebSocketHandlers {
   rerunTask: (id: string) => Promise<void>
   updateSnapshot: (file?: File) => Promise<void>
   getUnhandledErrors: () => unknown[]
+  getFailureReports: (testIds: string[]) => Record<string, TestFailureReport>
 }
 
 export interface WebSocketEvents {

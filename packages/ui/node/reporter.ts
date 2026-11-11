@@ -126,6 +126,7 @@ async function serializeReportMetadata(
       codeTable: [],
       testModules: {},
     },
+    failureReports: {},
   }
 
   // dedupe based on project relative paths since
@@ -149,6 +150,12 @@ async function serializeReportMetadata(
 
   for (const testModule of testModules) {
     result.files.push(testModule.task)
+
+    for (const test of testModule.children.allTests()) {
+      if (test.task.result?.attempts?.some((attempt) => attempt.state === 'fail')) {
+        result.failureReports[test.id] = ctx._getTestFailureReport(test.task)
+      }
+    }
 
     const project = testModule.project
     const projectName = project.name

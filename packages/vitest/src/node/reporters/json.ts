@@ -1,6 +1,7 @@
 import type { CoverageMap } from '@vitest/istanbul-lib-coverage'
 import type { SnapshotSummary } from '@vitest/snapshot'
 import type { Suite, TaskMeta, TaskState, TestBenchmark } from '../../runtime/runner/types'
+import type { FailedSeed } from '../../types/general'
 import type { Vitest } from '../core'
 import type { Reporter } from '../types/reporter'
 import type { TestModule } from './reported-tasks'
@@ -8,7 +9,7 @@ import { existsSync, promises as fs } from 'node:fs'
 import { dirname, resolve } from 'pathe'
 import { getOutputFile } from '../../utils/config-helpers'
 import { getSuites, getTests } from '../../utils/tasks'
-import { getFailedSeeds } from './renderers/seeds'
+import { getFailedSeeds, getReplayRun } from './renderers/seeds'
 
 // for compatibility reasons, the reporter produces a JSON similar to the one produced by the Jest JSON reporter
 // the following types are extracted from the Jest repository (and simplified)
@@ -46,7 +47,7 @@ export interface JsonAssertionResult {
    * The seeds of the failed attempts that used `context.random` or `vi.useFakeRandom()`.
    * @experimental
    */
-  failedSeeds?: string[]
+  failedSeeds?: FailedSeed[]
 }
 
 export interface JsonTestResult {
@@ -56,6 +57,11 @@ export interface JsonTestResult {
   startTime: number
   endTime: number
   assertionResults: Array<JsonAssertionResult>
+  /**
+   * The seed of the run that tested the file. In a merged report, each blob has its own seed.
+   * @experimental
+   */
+  seed?: number
   // summary: string
   // coverage: unknown
 }
@@ -166,6 +172,7 @@ export class JsonReporter implements Reporter {
           iter = iter.suite
         }
         ancestorTitles.reverse()
+        const failedSeeds = getFailedSeeds(this.ctx, t)
 
         return {
           ancestorTitles,
@@ -189,7 +196,7 @@ export class JsonReporter implements Reporter {
             : t.meta,
           tags: t.tags || [],
           benchmarks: t.benchmarks,
-          failedSeeds: getFailedSeeds(t),
+          failedSeeds: failedSeeds.length ? failedSeeds : undefined,
         } satisfies JsonAssertionResult
       })
 
@@ -210,6 +217,7 @@ export class JsonReporter implements Reporter {
         status: file.result?.state === 'fail' || hasFailedTests ? 'failed' : 'passed',
         message: file.result?.errors?.[0]?.message ?? '',
         name: file.filepath,
+        seed: getReplayRun(this.ctx, file).seed ?? undefined,
       })
     }
 
