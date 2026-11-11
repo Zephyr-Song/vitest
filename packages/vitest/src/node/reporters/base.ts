@@ -3,6 +3,7 @@ import type {
   File,
   Task,
   TaskResultAttempt,
+  Test,
   TestAnnotation,
   TestBenchmark,
   TestBenchmarkTask,
@@ -28,7 +29,15 @@ import { relative } from 'pathe'
 import c from 'tinyrainbow'
 import { groupBy } from '../../utils/base'
 import { isCI, isTTY } from '../../utils/env'
-import { getSuites, getTestName, getTests, hasFailed, hasFailedSnapshot } from '../../utils/tasks'
+import {
+  countSameFailures,
+  getSuites,
+  getTestName,
+  getTests,
+  hasFailed,
+  hasFailedSnapshot,
+  isRepeatReplay,
+} from '../../utils/tasks'
 import { generateCodeFrame, printStack } from '../printError'
 import {
   estimateModuleEvaluationSaving,
@@ -45,9 +54,15 @@ import {
   renderBenchmarkRow,
 } from './renderers/benchmark-table'
 import { F_CHECK, F_DOWN_RIGHT, F_POINTER } from './renderers/figures'
+import {
+  formatReplayCommand,
+  formatSeedList,
+  getReplaySeed,
+  getSeedRuns,
+  getSeeds,
+} from './renderers/seeds'
 import { formatTraceTimeline } from './renderers/trace-timeline'
 import {
-  countTestErrors,
   divider,
   errorBanner,
   formatProjectName,
@@ -396,8 +411,12 @@ export abstract class BaseReporter implements Reporter {
     return '  '.repeat(getIndentation(test))
   }
 
-  protected printAnnotations(test: TestCase, console: 'log' | 'error', padding = 0): void {
-    const annotations = test.annotations()
+  protected printAnnotations(
+    test: TestCase,
+    console: 'log' | 'error',
+    padding = 0,
+    annotations: ReadonlyArray<TestAnnotation> = test.annotations(),
+  ): void {
     if (!annotations.length) {
       return
     }
@@ -688,6 +707,16 @@ export abstract class BaseReporter implements Reporter {
       return
     }
     this.log(padSummaryTitle('Last Failed'), `${result.selected} of ${result.total} test files`)
+  }
+
+  // a merged report has a seed for each blob
+  private getUniqueRunSeed(): number | null {
+    const blobs = this.ctx.state.blobs?.seeds
+    if (!blobs) {
+      return this.ctx.getSeed()
+    }
+    const seeds = new Set(blobs.map(({ seed }) => seed))
+    return seeds.size === 1 ? [...seeds][0] : null
   }
 
   private printSeedSummary(): void {
@@ -1305,21 +1334,22 @@ export abstract class BaseReporter implements Reporter {
 
     const failedSuites = suites.filter((i) => i.result?.errors)
     const failedTests = tests.filter((i) => i.result?.state === 'fail')
-    const failedTotal = countTestErrors(failedSuites) + countTestErrors(failedTests)
+    const suiteErrors = groupTaskErrors(failedSuites)
+    const testErrors = groupTaskErrors(failedTests)
+    const failedTotal = suiteErrors.length + testErrors.length
 
-    // TODO: error divider should take into account merged errors for counting
     let current = 1
     const errorDivider = () =>
       this.error(`${c.red(c.dim(divider(`[${current++}/${failedTotal}]`, undefined, 1)))}\n`)
 
     if (failedSuites.length) {
       this.error(`\n${errorBanner(`Failed Suites ${failedSuites.length}`)}\n`)
-      this.printTaskErrors(failedSuites, errorDivider)
+      this.printTaskErrors(suiteErrors, errorDivider)
     }
 
     if (failedTests.length) {
       this.error(`\n${errorBanner(`Failed Tests ${failedTests.length}`)}\n`)
-      this.printTaskErrors(failedTests, errorDivider)
+      this.printTaskErrors(testErrors, errorDivider)
     }
 
     if (errors.length) {
@@ -1478,56 +1508,85 @@ export abstract class BaseReporter implements Reporter {
     }
   }
 
-  private printTaskErrors(tasks: Task[], errorDivider: () => void) {
-    interface ErrorsQueueItem {
-      error: TestError
-      // `undefined` for tasks without attempts (suites, files)
-      sources: { task: Task; attempt?: TaskResultAttempt }[]
+  // 1 failure can have many seeds. Its error and its replay command are from the replay seed.
+  private printSeedDetails(
+    test: Test,
+    attempts: (TaskResultAttempt | undefined)[],
+    replaySeed: string,
+    otherMessages: boolean,
+    showName: boolean,
+  ): void {
+    const log = (key: string, value: string) => this.error(`${padSummaryTitle(key)} ${value}`)
+    const seeds = [replaySeed, ...getSeeds(attempts).filter((seed) => seed !== replaySeed)]
+    const runs = seeds.map((seed) => getSeedRuns(test, seed))
+    const unstable = seeds.filter((_, i) => countSameFailures(runs[i]) < runs[i].length)
+    const checked = runs.filter((seedRuns) => seedRuns.length > 1).length
+
+    if (showName) {
+      log('Test', this.getFullName(test, separator))
     }
-    const errorsQueue: ErrorsQueueItem[] = []
-
-    for (const task of tasks) {
-      // Merge identical errors
-      for (const { error, attempt } of getErrorsWithAttempt(task)) {
-        let previous: ErrorsQueueItem | undefined
-
-        if (error.stack) {
-          previous = errorsQueue.find((item) => {
-            if (item.error.stack !== error.stack || item.error.diff !== error.diff) {
-              return false
-            }
-
-            const itemTask = item.sources[0].task
-            const currentProjectName = (task as File)?.projectName || task.file?.projectName || ''
-            const projectName = (itemTask as File)?.projectName || itemTask.file?.projectName || ''
-
-            const currentAnnotations = task.type === 'test' && task.annotations
-            const itemAnnotations = itemTask.type === 'test' && itemTask.annotations
-
-            return (
-              projectName === currentProjectName && deepEqual(currentAnnotations, itemAnnotations)
-            )
-          })
-        }
-
-        if (previous) {
-          previous.sources.push({ task, attempt })
-        } else {
-          errorsQueue.push({ error, sources: [{ task, attempt }] })
-        }
+    const failed = formatErrorAttempts(test, attempts)
+    if (failed) {
+      log('Failed', failed)
+    }
+    const shownSeed = otherMessages ? `${replaySeed} (this error)` : replaySeed
+    log(seeds.length > 1 ? 'Seeds' : 'Seed', formatSeedList([shownSeed, ...seeds.slice(1)]))
+    if (checked) {
+      const reproduced =
+        seeds.length === 1
+          ? `${countSameFailures(runs[0])} of ${runs[0].length} runs`
+          : `${checked - unstable.length} of ${checked} seeds`
+      if (unstable.length) {
+        const others = seeds.length > 1 ? `, not ${formatSeedList(unstable)}` : ''
+        const depends = seeds.length > 1 ? 'its seeds' : 'its seed'
+        log(
+          'Reproduced',
+          c.yellow(`${reproduced}${others}: the test depends on more than ${depends}`),
+        )
+      } else {
+        log('Reproduced', reproduced)
       }
     }
+    const command = formatReplayCommand(
+      test,
+      replaySeed,
+      this.getUniqueRunSeed(),
+      this.ctx._cliArgs,
+    )
+    log('Replay', c.dim(command))
+    this.error()
+  }
 
-    for (const { error, sources } of errorsQueue) {
+  private printTaskErrors(groups: ErrorGroup[], errorDivider: () => void) {
+    for (const { error: firstError, sources, otherMessages } of groups) {
       const tasks = sources.map(({ task }) => task)
       const attemptsByTask = new Map<Task, (TaskResultAttempt | undefined)[]>()
       for (const { task, attempt } of sources) {
         attemptsByTask.set(task, [...(attemptsByTask.get(task) ?? []), attempt])
       }
-      const screenshotPaths = [...attemptsByTask].flatMap(([task, attempts]) =>
-        [...new Set(attempts)].flatMap((attempt) =>
-          attempt ? getFailureScreenshotPaths(task, attempt) : [],
-        ),
+      const replaySeeds = new Map(
+        [...attemptsByTask].map(([task, attempts]) => [
+          task,
+          task.type === 'test' ? getReplaySeed(task, attempts) : undefined,
+        ]),
+      )
+      // the shown error comes from the seed of the replay command
+      const error =
+        (otherMessages &&
+          sources.find(({ task, attempt }) => attempt?.seed === replaySeeds.get(task))?.error) ||
+        firstError
+      // with many seeds, only the runs of the replay seed show their screenshots and traces
+      const shownAttemptsByTask = new Map(
+        [...attemptsByTask].map(([task, attempts]) => {
+          const seed = replaySeeds.get(task)
+          return [
+            task,
+            [...new Set(attempts)].filter((attempt) => !attempt?.seed || attempt.seed === seed),
+          ]
+        }),
+      )
+      const screenshotPaths = [...shownAttemptsByTask].flatMap(([task, attempts]) =>
+        attempts.flatMap((attempt) => (attempt ? getFailureScreenshotPaths(task, attempt) : [])),
       )
       for (const [task, attempts] of attemptsByTask) {
         const filepath = (task as File)?.filepath || ''
@@ -1536,7 +1595,8 @@ export abstract class BaseReporter implements Reporter {
 
         let name = this.getFullName(task, separator)
 
-        const attemptLabel = formatErrorAttempts(task, attempts)
+        // the seed details show the attempts below the error
+        const attemptLabel = !replaySeeds.get(task) && formatErrorAttempts(task, attempts)
         if (attemptLabel) {
           name += c.dim(` (${attemptLabel})`)
         }
@@ -1557,22 +1617,36 @@ export abstract class BaseReporter implements Reporter {
         screenshotPaths,
       })
 
-      for (const [task, attempts] of attemptsByTask) {
+      for (const [task, attempts] of shownAttemptsByTask) {
         for (const attempt of attempts) {
           const timeline =
             task.type === 'test' &&
             attempt &&
-            formatTraceTimeline(task.artifacts, attempt, this.ctx.config.root)
+            formatTraceTimeline(task, attempt, this.ctx.config.root)
           if (timeline) {
             this.error(`${timeline}\n`)
           }
         }
       }
 
-      if (tasks[0].type === 'test' && tasks[0].annotations.length) {
+      const annotations = getShownAnnotations(tasks[0], shownAttemptsByTask.get(tasks[0]) ?? [])
+      if (annotations.length) {
         const test = this.ctx.state.getReportedEntity(tasks[0]) as TestCase
-        this.printAnnotations(test, 'error', 1)
+        this.printAnnotations(test, 'error', 1, annotations)
         this.error()
+      }
+
+      for (const [task, attempts] of attemptsByTask) {
+        const replaySeed = replaySeeds.get(task)
+        if (task.type === 'test' && replaySeed) {
+          this.printSeedDetails(
+            task,
+            attempts,
+            replaySeed,
+            !!otherMessages,
+            attemptsByTask.size > 1,
+          )
+        }
       }
 
       errorDivider()
@@ -1581,10 +1655,13 @@ export abstract class BaseReporter implements Reporter {
 }
 
 function formatErrorAttempts(task: Task, attempts: (TaskResultAttempt | undefined)[]): string {
+  if (task.type === 'test' && task.result?.repeats) {
+    return formatRepeatAttempts(task, attempts)
+  }
   const showAttempt = (task.result?.attempts?.length ?? 0) > 1
   return [...Map.groupBy(attempts, (attempt) => attempt)]
     .map(([attempt, occurrences]) => {
-      const label = showAttempt && attempt ? formatAttempt(attempt) : ''
+      const label = showAttempt && attempt ? formatRetry(task, attempt.retryIndex) : ''
       const count = occurrences.length > 1 ? `${occurrences.length} times` : ''
       return count && label ? `${count} in ${label}` : count || label
     })
@@ -1592,13 +1669,189 @@ function formatErrorAttempts(task: Task, attempts: (TaskResultAttempt | undefine
     .join(', ')
 }
 
-function formatAttempt({ repeatIndex, retryIndex }: TaskResultAttempt): string {
-  const repeat = repeatIndex ? `${ordinal(repeatIndex)} repeat` : ''
-  const retry = retryIndex ? `${ordinal(retryIndex)} retry` : ''
-  if (repeat && retry) {
-    return `${retry} of ${repeat}`
+const MAX_SHOWN_RANGES = 5
+
+// The runs of 1 seed have 1 label, because the seed line shows if they failed with the same
+// error. Other runs have a label for each kind of retry, with the repeats in ranges.
+function formatRepeatAttempts(task: Test, attempts: (TaskResultAttempt | undefined)[]): string {
+  const seededRepeats = new Set(
+    attempts.flatMap((attempt) =>
+      attempt?.seed && attempt.retryIndex === 0 ? [attempt.repeatIndex] : [],
+    ),
+  )
+  const groups = Map.groupBy(
+    attempts.filter((attempt) => attempt != null),
+    (attempt) => (attempt.seed && seededRepeats.has(attempt.repeatIndex) ? 0 : attempt.retryIndex),
+  )
+  return [...groups]
+    .flatMap(([retryIndex, group]) => {
+      const repeatIndexes = [...new Set(group.map((attempt) => attempt.repeatIndex))]
+      // 1 run can fail with the same error more than 1 time, for example with `expect.soft`
+      const count = new Set(group).size === 1 && group.length > 1 ? `${group.length} times in ` : ''
+      return formatRepeatRuns(task, retryIndex, repeatIndexes).map((run) => ({
+        ...run,
+        retryIndex,
+        label: count + run.label,
+      }))
+    })
+    .sort((a, b) => a.repeatIndex - b.repeatIndex || a.retryIndex - b.retryIndex)
+    .map(({ label }) => label)
+    .join(', ')
+}
+
+function formatRetry(task: Task, retryIndex: number): string {
+  if (task.type === 'test' && isRepeatReplay(task, retryIndex)) {
+    return 'replay of initial run'
   }
-  return repeat || retry || 'initial run'
+  return retryIndex ? `${ordinal(retryIndex)} retry` : 'initial run'
+}
+
+function formatRepeatRuns(
+  task: Test,
+  retryIndex: number,
+  repeatIndexes: number[],
+): { label: string; repeatIndex: number }[] {
+  const repeats = repeatIndexes.filter((index) => index > 0).sort((a, b) => a - b)
+  const labels =
+    repeats.length < repeatIndexes.length
+      ? [{ label: formatRetry(task, retryIndex), repeatIndex: 0 }]
+      : []
+  if (!repeats.length) {
+    return labels
+  }
+  let text = `${ordinal(repeats[0])} repeat`
+  if (repeats.length > 1) {
+    const ranges: number[][] = []
+    for (const index of repeats) {
+      const range = ranges.at(-1)
+      if (range && range[1] + 1 === index) {
+        range[1] = index
+      } else {
+        ranges.push([index, index])
+      }
+    }
+    const shown = ranges.slice(0, MAX_SHOWN_RANGES)
+    const more = repeats.length - shown.reduce((sum, [start, end]) => sum + end - start + 1, 0)
+    text = `repeats ${shown.map(([start, end]) => (start === end ? start : `${start}-${end}`)).join(', ')}`
+    if (more) {
+      text += ` and ${more} more`
+    }
+  }
+  const replay = isRepeatReplay(task, retryIndex) ? 'replay' : ''
+  const retry = replay || (retryIndex ? `${ordinal(retryIndex)} retry` : '')
+  return [...labels, { label: retry ? `${retry} of ${text}` : text, repeatIndex: repeats[0] }]
+}
+
+// the annotations of the shown runs; a replay often adds the same annotation again
+function getShownAnnotations(
+  task: Task,
+  attempts: (TaskResultAttempt | undefined)[],
+): TestAnnotation[] {
+  if (task.type !== 'test') {
+    return []
+  }
+  const shown = new Map<string, TestAnnotation>()
+  for (const annotation of task.annotations) {
+    const isShownRun =
+      annotation.retryIndex == null ||
+      attempts.some(
+        (attempt) =>
+          attempt?.retryIndex === annotation.retryIndex &&
+          attempt?.repeatIndex === annotation.repeatIndex,
+      )
+    const { file, line, column } = annotation.location ?? {}
+    const key = `${file}:${line}:${column} ${annotation.type} ${annotation.message}`
+    if (isShownRun && !shown.has(key)) {
+      shown.set(key, annotation)
+    }
+  }
+  return [...shown.values()]
+}
+
+interface ErrorGroup {
+  error: TestError
+  sources: ErrorSource[]
+  otherMessages?: boolean
+}
+
+function groupTaskErrors(tasks: Task[]): ErrorGroup[] {
+  const groups: ErrorGroup[] = []
+
+  for (const task of tasks) {
+    // Merge identical errors
+    for (const { error, attempt } of getErrorsWithAttempt(task)) {
+      let previous: ErrorGroup | undefined
+
+      if (error.stack) {
+        previous = groups.find((item) => {
+          if (item.error.stack !== error.stack || item.error.diff !== error.diff) {
+            // other seeds of a test often fail at the same place with other values
+            return isSameFailureWithOtherSeed(item, { task, attempt, error })
+          }
+
+          const itemTask = item.sources[0].task
+          const currentProjectName = (task as File)?.projectName || task.file?.projectName || ''
+          const projectName = (itemTask as File)?.projectName || itemTask.file?.projectName || ''
+
+          const currentAnnotations = task.type === 'test' && task.annotations
+          const itemAnnotations = itemTask.type === 'test' && itemTask.annotations
+
+          return (
+            projectName === currentProjectName && deepEqual(currentAnnotations, itemAnnotations)
+          )
+        })
+      }
+
+      if (previous) {
+        previous.sources.push({ task, attempt, error })
+        if (previous.error.stack !== error.stack || previous.error.diff !== error.diff) {
+          previous.otherMessages = true
+        }
+      } else {
+        groups.push({ error, sources: [{ task, attempt, error }] })
+      }
+    }
+  }
+
+  return groups
+}
+
+interface ErrorSource {
+  task: Task
+  // `undefined` for tasks without attempts (suites, files)
+  attempt?: TaskResultAttempt
+  error: TestError
+}
+
+// Seeds of a test with repeats that fail at the same place are 1 failure. The runs of 1 seed
+// stay apart when their errors differ: then the seed does not reproduce the failure.
+function isSameFailureWithOtherSeed(
+  failure: { error: TestError; sources: ErrorSource[] },
+  { task, attempt, error }: ErrorSource,
+): boolean {
+  if (task.type !== 'test' || !task.result?.repeats || !attempt?.seed) {
+    return false
+  }
+  const location = getErrorLocation(error)
+  if (
+    location == null ||
+    error.name !== failure.error.name ||
+    location !== getErrorLocation(failure.error)
+  ) {
+    return false
+  }
+  return failure.sources.every(
+    (source) =>
+      source.task === task &&
+      source.attempt?.seed &&
+      (source.attempt.seed !== attempt.seed ||
+        (source.error.stack === error.stack && source.error.diff === error.diff)),
+  )
+}
+
+function getErrorLocation(error: TestError): string | undefined {
+  const frame = error.stacks?.[0]
+  return frame && `${frame.file}:${frame.line}:${frame.column}`
 }
 
 function getErrorsWithAttempt(task: Task): { error: TestError; attempt?: TaskResultAttempt }[] {

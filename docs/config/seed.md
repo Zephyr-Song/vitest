@@ -25,6 +25,8 @@ The seed for the order of shuffled files and tests (see [`sequence.shuffle`](/co
 
 A test keeps its random values when you filter or shuffle tests, or add other tests to the file. A shuffled suite keeps its order when you add or remove other suites.
 
+Each [repeat](/api/test#repeats) of a test gets another seed. Vitest derives it from the seed of the test and the index of the repeat. See [Seeded Tests](/guide/seeded-tests).
+
 Each project gets different values. In browser mode, each [browser instance](/config/browser/instances) is a separate project, so a test gets different values in each browser.
 
 If the config does not shuffle files or tests, the default seed is `0`. Then `context.random` returns the same values, and suites shuffled with `describe.shuffle` keep the same order on every run. Set another seed to test other values:

@@ -9,6 +9,7 @@ import type {
   Task,
   TaskBase,
   TaskEventPack,
+  TaskResultAttempt,
   TaskResultPack,
   Test,
 } from '../runtime/runner/types'
@@ -97,6 +98,32 @@ export function createTaskName(names: readonly (string | undefined)[], separator
 /* @__NO_SIDE_EFFECTS__ */
 export function isSnapshotMatchError(error: TestError | undefined): error is TestError {
   return typeof error?.message === 'string' && /Snapshot .* mismatched/.test(error.message)
+}
+
+// the runs of a seed that failed with the same error as its first run
+export function countSameFailures(runs: TaskResultAttempt[]): number {
+  const error = runs[0]?.errors?.[0]
+  return runs.filter(
+    ({ state, errors }) =>
+      state === 'fail' &&
+      errors?.[0]?.name === error?.name &&
+      errors?.[0]?.message === error?.message,
+  ).length
+}
+
+export function getRetryCount(retry: number | { count?: number } | undefined): number {
+  if (retry === undefined) {
+    return 0
+  }
+  if (typeof retry === 'number') {
+    return retry
+  }
+  return retry.count ?? 0
+}
+
+// without `retry`, a failed repeat that used its seed runs 1 more time to check that it fails again
+export function isRepeatReplay(test: Test, retryIndex: number): boolean {
+  return !!test.repeats && retryIndex > 0 && !getRetryCount(test.retry)
 }
 
 /* @__NO_SIDE_EFFECTS__ */

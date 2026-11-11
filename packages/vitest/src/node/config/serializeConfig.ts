@@ -44,6 +44,7 @@ export function serializeConfig(project: TestProject): SerializedConfig {
     },
     diff: serializeDiffOptions(config.diff),
     seed: globalConfig.seed ?? 0,
+    replaySeed: globalConfig.replaySeed,
     retry: config.retry,
     repeats: config.repeats,
     disableConsoleIntercept: config.disableConsoleIntercept,

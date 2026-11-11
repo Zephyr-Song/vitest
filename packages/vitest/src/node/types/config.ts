@@ -1317,6 +1317,10 @@ export interface ResolvedConfig extends Omit<
    * `undefined` if neither is set, then `context.random` uses the seed `0`.
    */
   seed?: number
+  /**
+   * The seed of `context.random` for every test, from the `--replay-seed` flag.
+   */
+  replaySeed?: string
   base?: string
   diff?: string | SerializedDiffOptions
   bail?: number

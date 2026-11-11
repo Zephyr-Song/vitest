@@ -590,6 +590,12 @@ Changes the order in which setup files are executed. Accepted values are: "list"
 
 Seed for the order of shuffled files and tests, and for `context.random`. Use `random` to generate a new seed (default: `0`, or a random seed if files or tests are shuffled)
 
+### replaySeed
+
+- **CLI:** `--replaySeed <seed>`
+
+Runs the selected tests 1 time with this seed of `context.random`. Vitest prints the seed of a failed test
+
 ### inspect
 
 - **CLI:** `--inspect [[host:]port]`

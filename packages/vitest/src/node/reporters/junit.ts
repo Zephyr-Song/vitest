@@ -1,5 +1,5 @@
 import type { SerializedError } from '@vitest/utils'
-import type { Task } from '../../runtime/runner/types'
+import type { Task, Test } from '../../runtime/runner/types'
 import type { Vitest } from '../core'
 import type { ErrorOptions } from '../logger'
 import type { Reporter } from '../types/reporter'
@@ -12,6 +12,7 @@ import { getOutputFile } from '../../utils/config-helpers'
 import { getSuites } from '../../utils/tasks'
 import { renderBenchmarkTableText } from './renderers/benchmark-table'
 import { IndentedLogger } from './renderers/indented-logger'
+import { getFailedSeeds } from './renderers/seeds'
 
 export interface ClassnameTemplateVariables {
   /** Relative path from the root (e.g. `src/foo.test.ts`) */
@@ -220,6 +221,17 @@ function escapeXML(value: any): string {
   )
 }
 
+function getTestProperties(test: Test): [name: string, value: string][] {
+  const properties: [string, string][] = test.annotations.map(({ type, message }) => [
+    type,
+    message,
+  ])
+  for (const seed of getFailedSeeds(test) ?? []) {
+    properties.push(['vitest.seed', seed])
+  }
+  return properties
+}
+
 function executionTime(durationMS: number) {
   return (durationMS / 1000).toLocaleString('en-US', {
     useGrouping: false,
@@ -407,13 +419,14 @@ export class JUnitReporter implements Reporter {
             await this.logger.log('<skipped/>')
           }
 
-          if (task.type === 'test' && task.annotations.length) {
+          const properties = task.type === 'test' ? getTestProperties(task) : []
+          if (properties.length) {
             await this.logger.log('<properties>')
             this.logger.indent()
 
-            for (const annotation of task.annotations) {
+            for (const [name, value] of properties) {
               await this.logger.log(
-                `<property name="${escapeXML(annotation.type)}" value="${escapeXML(annotation.message)}">`,
+                `<property name="${escapeXML(name)}" value="${escapeXML(value)}">`,
               )
               await this.logger.log('</property>')
             }

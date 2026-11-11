@@ -8,6 +8,7 @@ import { existsSync, promises as fs } from 'node:fs'
 import { dirname, resolve } from 'pathe'
 import { getOutputFile } from '../../utils/config-helpers'
 import { getSuites, getTests } from '../../utils/tasks'
+import { getFailedSeeds } from './renderers/seeds'
 
 // for compatibility reasons, the reporter produces a JSON similar to the one produced by the Jest JSON reporter
 // the following types are extracted from the Jest repository (and simplified)
@@ -41,6 +42,11 @@ export interface JsonAssertionResult {
   location?: Callsite | null
   tags: string[]
   benchmarks: TestBenchmark[]
+  /**
+   * The seeds of the failed attempts that used `context.random` or `vi.useFakeRandom()`.
+   * @experimental
+   */
+  failedSeeds?: string[]
 }
 
 export interface JsonTestResult {
@@ -183,6 +189,7 @@ export class JsonReporter implements Reporter {
             : t.meta,
           tags: t.tags || [],
           benchmarks: t.benchmarks,
+          failedSeeds: getFailedSeeds(t),
         } satisfies JsonAssertionResult
       })
 

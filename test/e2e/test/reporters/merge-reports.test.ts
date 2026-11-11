@@ -996,7 +996,7 @@ test("works on browser", () => {
           8| })
           9|
 
-    ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+    ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
 
      FAIL  |node|  linux  basic.test.ts > works on browser
      FAIL  |node|  macos  basic.test.ts > works on browser
@@ -1009,7 +1009,7 @@ test("works on browser", () => {
          12| })
          13|
 
-    ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+    ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
 
      FAIL  |browser (chromium)|  macos  basic.test.ts > works on node
     AssertionError: expected 'object' to be 'undefined' // Object.is equality
@@ -1025,7 +1025,7 @@ test("works on browser", () => {
           8| })
           9|
 
-    ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+    ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
 
     "
   `)

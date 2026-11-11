@@ -237,6 +237,9 @@ export class Logger {
     if (seed != null && !this.ctx.state.blobs) {
       this.log(PAD + c.gray(`Running tests with seed "${seed}"`))
     }
+    if (this.ctx.config.replaySeed) {
+      this.log(PAD + c.gray(`Replaying seed "${this.ctx.config.replaySeed}"`))
+    }
 
     const resolvedUrls = this.ctx.vite.resolvedUrls
     const origin = resolvedUrls?.local[0] ?? resolvedUrls?.network[0]
